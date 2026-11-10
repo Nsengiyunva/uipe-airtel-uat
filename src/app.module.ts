@@ -3,7 +3,6 @@ import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AirtelModule } from './airtel/airtel.module.js';
-import { PaymentsModule } from './payments/payments.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
@@ -19,7 +18,6 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       serviceId: 'uipe-airtel-uat',
     }),
     PrismaModule,
-    PaymentsModule,
     AirtelModule,
   ],
   controllers: [AppController],

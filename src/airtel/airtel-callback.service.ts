@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import type { AirtelCallbackBody, PaymentStatus } from './airtel-callback.types.js';
+import type { RawCallback } from './airtel-callback.types.js';
+
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' || typeof v === 'number' ? String(v) : undefined;
 
 @Injectable()
 export class AirtelCallbackService {
@@ -9,52 +12,35 @@ export class AirtelCallbackService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  static mapStatus(code: string): PaymentStatus {
-    switch (code) {
-      case 'TS':
-        return 'SUCCESS';
-      case 'TF': // failed
-      case 'TE': // expired
-        return 'FAILED';
-      default: // TA ambiguous, TIP in progress, unknown
-        return 'PENDING';
-    }
-  }
-
-  async process(body: AirtelCallbackBody, sourceIp: string): Promise<void> {
-    const { id, status_code, airtel_money_id, message } = body.transaction;
-    const status = AirtelCallbackService.mapStatus(status_code);
-
-    // One transaction: store the raw callback (always) and move the payment out of
-    // PENDING (only if it is still PENDING). The `status: 'PENDING'` filter is the
-    // idempotency guard: retries and duplicates update nothing, even under concurrency.
-    const [, update] = await this.prisma.$transaction([
-      this.prisma.airtelCallback.create({
-        data: {
-          sourceIp,
-          reference: id,
-          statusCode: status_code,
-          raw: body as unknown as Prisma.InputJsonObject,
-        },
-      }),
-      this.prisma.payment.updateMany({
-        where: { reference: id, status: 'PENDING' },
-        data: { status, airtelMoneyId: airtel_money_id, providerMessage: message },
-      }),
-    ]);
-
-    if (update.count === 0) {
-      const existing = await this.prisma.payment.findUnique({ where: { reference: id } });
-      this.logger.warn(
-        existing
-          ? `Callback for ${id} ignored: payment already ${existing.status}`
-          : `Callback for unknown reference ${id} stored but matched no payment`,
-      );
-      return;
+  /** Store a callback exactly as received. Never rejects based on its content. */
+  async record(cb: RawCallback): Promise<void> {
+    let body: unknown;
+    try {
+      body = cb.rawBody ? JSON.parse(cb.rawBody) : undefined;
+    } catch {
+      body = undefined; // not JSON: rawBody still holds it
     }
 
-    // TODO: confirm with Airtel's transaction-enquiry API before trusting the body.
-    // TODO: on SUCCESS -> mark membership paid, issue receipt, etc.
-    this.logger.log(`Airtel ${id} -> ${status} (${airtel_money_id ?? 'n/a'})`);
+    const tx = (body as { transaction?: Record<string, unknown> } | undefined)?.transaction;
+    const reference = str(tx?.id);
+    const statusCode = str(tx?.status_code);
+    const airtelMoneyId = str(tx?.airtel_money_id);
+
+    await this.prisma.airtelCallback.create({
+      data: {
+        sourceIp: cb.sourceIp,
+        contentType: cb.contentType,
+        headers: cb.headers as Prisma.InputJsonObject,
+        rawBody: cb.rawBody,
+        body: body === undefined || body === null ? undefined : (body as Prisma.InputJsonValue),
+        reference,
+        statusCode,
+        airtelMoneyId,
+      },
+    });
+
+    this.logger.log(
+      `Airtel callback stored: ref=${reference ?? 'n/a'} status=${statusCode ?? 'n/a'} ip=${cb.sourceIp}`,
+    );
   }
 }

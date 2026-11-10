@@ -1,21 +1,8 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  ForbiddenException,
-  HttpCode,
-  Logger,
-  Post,
-  Req,
-} from '@nestjs/common';
+import { Controller, ForbiddenException, HttpCode, Logger, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { AirtelCallbackService } from './airtel-callback.service.js';
-import type { AirtelCallbackBody } from './airtel-callback.types.js';
 
-function isValidBody(b: unknown): b is AirtelCallbackBody {
-  const t = (b as AirtelCallbackBody | undefined)?.transaction;
-  return !!t && typeof t.id === 'string' && t.id !== '' && typeof t.status_code === 'string';
-}
+const REDACTED_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
 
 @Controller('payments/airtel')
 export class AirtelCallbackController {
@@ -25,10 +12,10 @@ export class AirtelCallbackController {
 
   @Post('callback')
   @HttpCode(200)
-  async handle(@Body() body: unknown, @Req() req: Request) {
+  async handle(@Req() req: Request) {
     const ip = (req.ip ?? '').replace('::ffff:', '');
 
-    // Optional IP allowlist: AIRTEL_ALLOWED_IPS="1.2.3.4,5.6.7.8"
+    // Optional IP allowlist: AIRTEL_ALLOWED_IPS="1.2.3.4,5.6.7.8" (off when unset)
     const allowed = (process.env.AIRTEL_ALLOWED_IPS ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -38,13 +25,23 @@ export class AirtelCallbackController {
       throw new ForbiddenException();
     }
 
-    if (!isValidBody(body)) throw new BadRequestException('Invalid callback payload');
+    // The callback route uses a raw body parser (see app.setup.ts), so we get the exact
+    // bytes Airtel sent, even if they are not valid JSON. NUL bytes cannot be stored in Postgres.
+    const rawBody = (Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '').replaceAll('\u0000', '');
 
-    this.logger.log(`Airtel callback from ${ip}: ${JSON.stringify(body)}`);
+    const headers = Object.fromEntries(
+      Object.entries(req.headers).filter(([k]) => !REDACTED_HEADERS.includes(k)),
+    );
 
-    // If storing fails we let the error surface as a 500 (instead of a silent 200) so the
-    // event is not lost quietly; the full body is in the log line above as a fallback.
-    await this.service.process(body, ip);
+    this.logger.log(`Airtel callback from ${ip}: ${rawBody}`);
+
+    // If storing fails this surfaces as a 500 (not a silent 200); the body is in the log above.
+    await this.service.record({
+      sourceIp: ip,
+      contentType: req.headers['content-type'],
+      headers,
+      rawBody,
+    });
     return { status: 'received' };
   }
 }

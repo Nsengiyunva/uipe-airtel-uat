@@ -9,29 +9,21 @@ datasource db {
   provider = "postgresql"
 }
 
-/// A payment we initiated with Airtel. `reference` is the id we send as transaction.id.
-model Payment {
-  id              BigInt   @id @default(autoincrement())
-  reference       String   @unique
-  amount          Decimal? @db.Decimal(14, 2)
-  msisdn          String?
-  status          String   @default("PENDING") // PENDING | SUCCESS | FAILED
-  airtelMoneyId   String?  @map("airtel_money_id")
-  providerMessage String?  @map("provider_message")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@map("payments")
-}
-
-/// Every callback received, verbatim (audit trail). No FK on reference: unknown references are stored too.
+/// Everything Airtel POSTs to the callback URL, stored as received.
 model AirtelCallback {
-  id         BigInt   @id @default(autoincrement())
-  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz
-  sourceIp   String?  @map("source_ip")
-  reference  String?
-  statusCode String?  @map("status_code")
-  raw        Json
+  id            BigInt   @id @default(autoincrement())
+  receivedAt    DateTime @default(now()) @map("received_at") @db.Timestamptz
+  sourceIp      String?  @map("source_ip")
+  contentType   String?  @map("content_type")
+  headers       Json?
+  /// Exact request body text, whatever it was (JSON or not).
+  rawBody       String   @map("raw_body")
+  /// rawBody parsed as JSON; null when it was not valid JSON.
+  body          Json?
+  /// Convenience columns pulled out of body.transaction when present.
+  reference     String?
+  statusCode    String?  @map("status_code")
+  airtelMoneyId String?  @map("airtel_money_id")
 
   @@index([reference])
   @@map("airtel_callbacks")

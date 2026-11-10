@@ -1,13 +1,6 @@
-export interface AirtelTransaction {
-  id: string;
-  message?: string;
-  status_code: string;
-  airtel_money_id?: string;
+export interface RawCallback {
+  sourceIp: string;
+  contentType?: string;
+  headers: Record<string, unknown>;
+  rawBody: string;
 }
-
-export interface AirtelCallbackBody {
-  transaction: AirtelTransaction;
-  hash?: string;
-}
-
-export type PaymentStatus = 'SUCCESS' | 'FAILED' | 'PENDING';
