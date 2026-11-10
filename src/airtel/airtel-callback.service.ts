@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AirtelCallbackStore } from './airtel-callback.store.js';
+import type { Prisma } from '../generated/prisma/client.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import type { AirtelCallbackBody, PaymentStatus } from './airtel-callback.types.js';
 
 @Injectable()
 export class AirtelCallbackService {
   private readonly logger = new Logger(AirtelCallbackService.name);
 
-  constructor(private readonly store: AirtelCallbackStore) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   static mapStatus(code: string): PaymentStatus {
     switch (code) {
@@ -22,28 +23,38 @@ export class AirtelCallbackService {
 
   async process(body: AirtelCallbackBody, sourceIp: string): Promise<void> {
     const { id, status_code, airtel_money_id, message } = body.transaction;
+    const status = AirtelCallbackService.mapStatus(status_code);
 
-    // Idempotency: Airtel may retry; ignore repeats once finalised.
-    if (this.store.isFinalised(id)) {
-      this.logger.warn(`Duplicate callback ignored for ${id}`);
+    // One transaction: store the raw callback (always) and move the payment out of
+    // PENDING (only if it is still PENDING). The `status: 'PENDING'` filter is the
+    // idempotency guard: retries and duplicates update nothing, even under concurrency.
+    const [, update] = await this.prisma.$transaction([
+      this.prisma.airtelCallback.create({
+        data: {
+          sourceIp,
+          reference: id,
+          statusCode: status_code,
+          raw: body as unknown as Prisma.InputJsonObject,
+        },
+      }),
+      this.prisma.payment.updateMany({
+        where: { reference: id, status: 'PENDING' },
+        data: { status, airtelMoneyId: airtel_money_id, providerMessage: message },
+      }),
+    ]);
+
+    if (update.count === 0) {
+      const existing = await this.prisma.payment.findUnique({ where: { reference: id } });
+      this.logger.warn(
+        existing
+          ? `Callback for ${id} ignored: payment already ${existing.status}`
+          : `Callback for unknown reference ${id} stored but matched no payment`,
+      );
       return;
     }
 
     // TODO: confirm with Airtel's transaction-enquiry API before trusting the body.
-    const status = AirtelCallbackService.mapStatus(status_code);
-
-    await this.store.save({
-      receivedAt: new Date().toISOString(),
-      sourceIp,
-      reference: id,
-      statusCode: status_code,
-      status,
-      airtelMoneyId: airtel_money_id,
-      message,
-      raw: body,
-    });
-
-    // TODO: on SUCCESS -> mark membership/payment paid, issue receipt, etc.
+    // TODO: on SUCCESS -> mark membership paid, issue receipt, etc.
     this.logger.log(`Airtel ${id} -> ${status} (${airtel_money_id ?? 'n/a'})`);
   }
 }

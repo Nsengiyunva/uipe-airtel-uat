@@ -11,14 +11,3 @@ export interface AirtelCallbackBody {
 }
 
 export type PaymentStatus = 'SUCCESS' | 'FAILED' | 'PENDING';
-
-export interface CallbackRecord {
-  receivedAt: string;
-  sourceIp: string;
-  reference: string;
-  statusCode: string;
-  status: PaymentStatus;
-  airtelMoneyId?: string;
-  message?: string;
-  raw: unknown;
-}

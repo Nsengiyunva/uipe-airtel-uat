@@ -1,0 +1,38 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A payment we initiated with Airtel. `reference` is the id we send as transaction.id.
+model Payment {
+  id              BigInt   @id @default(autoincrement())
+  reference       String   @unique
+  amount          Decimal? @db.Decimal(14, 2)
+  msisdn          String?
+  status          String   @default("PENDING") // PENDING | SUCCESS | FAILED
+  airtelMoneyId   String?  @map("airtel_money_id")
+  providerMessage String?  @map("provider_message")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("payments")
+}
+
+/// Every callback received, verbatim (audit trail). No FK on reference: unknown references are stored too.
+model AirtelCallback {
+  id         BigInt   @id @default(autoincrement())
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz
+  sourceIp   String?  @map("source_ip")
+  reference  String?
+  statusCode String?  @map("status_code")
+  raw        Json
+
+  @@index([reference])
+  @@map("airtel_callbacks")
+}

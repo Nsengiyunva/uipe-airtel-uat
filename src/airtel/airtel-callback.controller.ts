@@ -40,12 +40,11 @@ export class AirtelCallbackController {
 
     if (!isValidBody(body)) throw new BadRequestException('Invalid callback payload');
 
-    // Ack quickly; processing errors must not turn into non-200s that trigger retries.
-    try {
-      await this.service.process(body, ip);
-    } catch (e) {
-      this.logger.error(`Callback processing failed: ${(e as Error).message}`, (e as Error).stack);
-    }
+    this.logger.log(`Airtel callback from ${ip}: ${JSON.stringify(body)}`);
+
+    // If storing fails we let the error surface as a 500 (instead of a silent 200) so the
+    // event is not lost quietly; the full body is in the log line above as a fallback.
+    await this.service.process(body, ip);
     return { status: 'received' };
   }
 }
